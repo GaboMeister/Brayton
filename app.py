@@ -11,7 +11,7 @@ import pandas as pd
 import numpy as np
 import plotly.express as px
 
-import BraytonRI6 as backend  # motor RI6 con simular_batch
+import Brayton as backend  # motor RI6 con simular_batch
 
 st.set_page_config(page_title="Brayton RI6 — Dashboard", layout="wide")
 
@@ -138,3 +138,4 @@ if run:
 
 else:
     st.info("👈 Sube **Municipios_D.xlsx** y **Base_de_datos_turbinas_de_gas.csv**, ajusta parámetros y da clic en **Simular**.")
+
