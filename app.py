@@ -4,14 +4,13 @@ Created on Sun Apr 20 02:58:07 2025
 
 @author: Gabo San
 """
-
 # app.py
 import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
 
-import Brayton as backend  # motor RI6 con simular_batch
+import BraytonRI6 as backend  # motor RI6 con simular_batch
 
 st.set_page_config(page_title="Brayton RI6 — Dashboard", layout="wide")
 
@@ -36,8 +35,10 @@ with st.sidebar.expander("Generación y combustible (opcional)", expanded=False)
 run = st.sidebar.button("▶️ Simular")
 
 st.title("Ciclo Brayton + Cogeneración — Dashboard (RI6)")
-st.markdown("Sube **municipios** y **turbinas**, ajusta parámetros y presiona **Simular**. "
-            "La app corre el motor **RI6** en el servidor y te permite **descargar** el Excel de resultados.")
+st.markdown(
+    "Sube **municipios** y **turbinas**, ajusta parámetros y presiona **Simular**. "
+    "La app corre el motor **RI6** en el servidor y te permite **descargar** el Excel de resultados."
+)
 
 # ===== Helpers cache =====
 @st.cache_data(show_spinner=False)
@@ -76,7 +77,7 @@ if run:
         use_container_width=True,
     )
 
-    # ===== Tabs de resultados =====
+    # ===== Tabs “core” =====
     t1, t2, t3, t4, t5, t6, t7 = st.tabs([
         "✅ Validaciones", "⚠️ Inviables", "📊 Cálculos", "🌡️ Estados",
         "🟢 Semáforo HX", "🌡️ T7_gap", "⚡ Eficiencias"
@@ -119,12 +120,11 @@ if run:
                                title="Distribución de T7_gap (K)")
             st.plotly_chart(fig, use_container_width=True)
         with col2:
-            # Si el Excel de municipios trae Altitud o similar, úsalas aquí:
-            y_col = "eta_cog_global (%)"
-            fig = px.scatter(df_calc, x="T7_gap (K)", y=y_col,
-                             color="Semaforo_HX",
-                             hover_data=["Municipio","Turbina"],
-                             title="T7_gap (K) vs eficiencia global")
+            fig = px.scatter(
+                df_calc, x="T7_gap (K)", y="eta_cog_global (%)",
+                color="Semaforo_HX", hover_data=["Municipio","Turbina"],
+                title="T7_gap (K) vs eficiencia global"
+            )
             st.plotly_chart(fig, use_container_width=True)
 
     with t7:
@@ -135,6 +135,139 @@ if run:
             title="η_cog_global (%) vs P_elec (kW)"
         )
         st.plotly_chart(fig, use_container_width=True)
+
+    # ===== PREPROCESO para gráficas “clásicas” del asesor (mapeo de columnas) =====
+    # 1) Altitud (media) desde los municipios (si existe)
+    if "Altitud (media)" in df_mun.columns:
+        df_calc["Altitud (media)"] = df_calc["Municipio"].map(
+            df_mun.set_index("Municipio")["Altitud (media)"]
+        )
+    else:
+        df_calc["Altitud (media)"] = np.nan
+
+    # 2) Renombrado a nombres “clásicos” del asesor
+    df_asesor = df_calc.rename(columns={
+        "P_elec (kW)":              "P_elec_corr (kW)",   # potencia "corregida"
+        "eta_ciclo_electrico (%)":  "eta_ciclo (%)",
+        "eta_cog_global (%)":       "eta_global (%)",
+        "SFC_elec (kg/kWh)":        "SFC (kg/kWh)",
+        "Q_gc (kW)":                "Q_input (kW)",       # calor de gases al HX
+        "Q_user (kW)":              "Q_rec (kW)",         # calor útil al usuario
+    })
+
+    # ===== Pestañas “Clásico Asesor” (idénticas a la app anterior) =====
+    tabs_clas = st.tabs([
+        "Pot vs Eficiencia",
+        "Qútil vs Qin",
+        "Pot vs Qin",
+        "SFC vs Pot",
+        "η_global vs Altitud",
+        "Q_rec vs Altitud",
+        "3D Pot-Alt-SFC"
+    ])
+
+    # 1) Potencia vs eficiencia de ciclo
+    with tabs_clas[0]:
+        fig = px.scatter(
+            df_asesor,
+            x="P_elec_corr (kW)",
+            y="eta_ciclo (%)",
+            color="Turbina",
+            labels={
+                "P_elec_corr (kW)": "Potencia corregida (kW)",
+                "eta_ciclo (%)": "Eficiencia ciclo (%)"
+            },
+            title="Potencia vs Eficiencia de Ciclo"
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+    # 2) Energía térmica útil vs calor suministrado
+    with tabs_clas[1]:
+        fig = px.scatter(
+            df_asesor,
+            x="Q_input (kW)",
+            y="Q_rec (kW)",
+            color="Turbina",
+            labels={
+                "Q_input (kW)": "Calor suministrado (kW)",
+                "Q_rec (kW)": "Energía térmica útil (kW)"
+            },
+            title="Energía térmica útil vs Calor suministrado"
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+    # 3) Potencia eléctrica corregida vs calor suministrado
+    with tabs_clas[2]:
+        fig = px.scatter(
+            df_asesor,
+            x="Q_input (kW)",
+            y="P_elec_corr (kW)",
+            color="Turbina",
+            labels={
+                "Q_input (kW)": "Calor suministrado (kW)",
+                "P_elec_corr (kW)": "Potencia corregida (kW)"
+            },
+            title="Potencia eléctrica vs Calor suministrado"
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+    # 4) SFC vs Potencia eléctrica
+    with tabs_clas[3]:
+        fig = px.scatter(
+            df_asesor,
+            x="P_elec_corr (kW)",
+            y="SFC (kg/kWh)",
+            color="Turbina",
+            labels={
+                "P_elec_corr (kW)": "Potencia corregida (kW)",
+                "SFC (kg/kWh)": "SFC (kg/kWh)"
+            },
+            title="SFC vs Potencia eléctrica"
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+    # 5) Eficiencia global vs Altitud
+    with tabs_clas[4]:
+        fig = px.scatter(
+            df_asesor,
+            x="Altitud (media)",
+            y="eta_global (%)",
+            color="Turbina",
+            labels={"eta_global (%)": "Eficiencia global (%)"},
+            title="Eficiencia global vs Altitud"
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+    # 6) Calor recuperado vs Altitud
+    with tabs_clas[5]:
+        fig = px.scatter(
+            df_asesor,
+            x="Altitud (media)",
+            y="Q_rec (kW)",
+            color="Turbina",
+            labels={"Q_rec (kW)": "Calor recuperado (kW)"},
+            title="Calor recuperado vs Altitud"
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+    # 7) Gráfica 3D Potencia vs Altitud vs SFC
+    with tabs_clas[6]:
+        fig3d = px.scatter_3d(
+            df_asesor,
+            x="Altitud (media)",
+            y="P_elec_corr (kW)",
+            z="SFC (kg/kWh)",
+            color="Turbina",
+            hover_data=["Municipio"],
+            labels={
+                "Altitud (media)": "Altitud (m)",
+                "P_elec_corr (kW)": "Potencia corregida (kW)",
+                "SFC (kg/kWh)": "SFC (kg/kWh)"
+            },
+            title="Potencia vs Altitud vs SFC (3D)"
+        )
+        fig3d.update_layout(width=900, height=650)
+        st.plotly_chart(fig3d, use_container_width=True)
 
 else:
     st.info("👈 Sube **Municipios_D.xlsx** y **Base_de_datos_turbinas_de_gas.csv**, ajusta parámetros y da clic en **Simular**.")
