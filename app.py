@@ -9,7 +9,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
-import BraytonRI as backend
+import Brayton as backend
 import base64
 
 def img_to_base64(path: str) -> str:
@@ -251,4 +251,5 @@ if st.sidebar.button("▶️ Simular"):
             )
             fig3d.update_layout(width=800, height=600)
             st.plotly_chart(fig3d, use_container_width=True)            
+
 
