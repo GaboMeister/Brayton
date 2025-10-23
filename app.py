@@ -107,7 +107,7 @@ with st.form("form_params"):
     st.markdown("### HX & Agua")
     c1, c2, c3 = st.columns(3)
     with c1:
-        U_GLOBAL = st.slider("U_GLOBAL (kW/m²·K)", 0.05, 2.0, 0.30, 0.01)
+        U_GLOBAL = st.slider("U_GLOBAL (kW/m²·K)", 0.05, 20.0, 0.30, 0.01)
         A_GLOBAL = st.slider("A_GLOBAL (m²)", 1.0, 50.0, 8.0, 0.5)
         m_dot_w  = st.slider("m_dot_w (kg/s)", 0.1, 50.0, 2.0, 0.1)
     with c2:
@@ -493,3 +493,4 @@ else:
             st.plotly_chart(hm, use_container_width=True)
         else:
             st.info("No hay datos suficientes (o falta η_global) para construir el heatmap.")
+
