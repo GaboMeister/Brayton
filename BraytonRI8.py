@@ -7,7 +7,7 @@ Created on Thu Oct 16 02:32:09 2025
 
 import os
 from io import BytesIO
-from typing import Tuple, Dict, Any
+from typing import Tuple, Dict, Any, Optional
 import numpy as np
 import pandas as pd
 
@@ -188,6 +188,27 @@ def hx_ntu_lazo_agua(m_dot_gas: float, T4: float, P4_gas_Pa: float,
     h7_real = h6 + q_spec_real
     T7_real = T_HP(h7_real*1000.0, P7, FLUIDO_W)
     s7_real = PropsSI("S","H",h7_real*1000.0,"P",P7,FLUIDO_W)/1000.0
+    
+    # -------- NUEVO: límite físico por salida mínima del gas (corrosión / operacional)
+    # h4 en kJ/kg
+    h4_kJkg = H_TP(T4, P4_gas_Pa, FLUIDO_GAS) / 1000.0
+    # entalpía mínima permitida para el gas a la salida (T5_min en K)
+    h5_min_kJkg = H_TP(T_GAS_OUT_MINK, P4_gas_Pa, FLUIDO_GAS) / 1000.0
+
+    # calor máximo que el gas puede ceder sin violar T5_min
+    Q_limit_gc = max((h4_kJkg - h5_min_kJkg) * m_dot_gas, 0.0)  # kW
+
+    # aplica el tope extra
+    Q_to_water = min(Q_to_water, Q_limit_gc)
+
+    # --- recalcula h5/T5 con el Q_to_water finalmente permitido
+    if m_dot_gas > 0:
+        h5_kJkg = h4_kJkg - Q_to_water / m_dot_gas
+        # pequeña salvaguarda numérica
+        h5_kJkg = max(h5_kJkg, h5_min_kJkg)
+        T5 = T_HP(h5_kJkg * 1000.0, P4_gas_Pa, FLUIDO_GAS)
+    else:
+        T5 = T4
 
     # Salida del gas: cerrar por energía (h5 primero), luego T5 desde (H,P)
     h4_local_kJkg = H_TP(T4, P4_gas_Pa, FLUIDO_GAS)/1000.0
@@ -304,6 +325,11 @@ def simular_ciclo_mdot(
     }
 
     return estados, calculos, cog
+
+
+# =============================================================================
+# 
+# =============================================================================
 
 
 # =============================================================================
