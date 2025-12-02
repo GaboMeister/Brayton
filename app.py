@@ -5,347 +5,577 @@ Created on Thu Oct 16 02:32:09 2025
 @author: Gabo San
 """
 
-import io
-import base64
+# app.py
+# Interfaz en Streamlit para correr BraytonRI8.py y visualizar resultados
+# Pensada para usuarios que NO programan: suben sus bases, mueven sliders y listo.
+
+import os
+import glob
+import json
+import subprocess
+import sys
+
 import pandas as pd
 import streamlit as st
 import plotly.express as px
-from CoolProp.CoolProp import PropsSI
 
-import BraytonRI8 as w  # <--- motor único
+# -------------------------------------------------
+# CONFIGURACIÓN DE LA PÁGINA
+# -------------------------------------------------
+st.set_page_config(
+    page_title="Simulación Brayton + Cogeneración",
+    layout="wide",
+)
 
-# -------- utilidades UI --------
-def img_to_base64(path: str) -> str:
-    with open(path, "rb") as f:
-        return base64.b64encode(f.read()).decode()
-
-def safe_read_excel(path):
-    try: return pd.read_excel(path)
-    except Exception: return None
-
-def safe_read_csv(path):
-    try: return pd.read_csv(path)
-    except Exception: return None
-
-def safe_range(series, pad_ratio=0.1, pad_abs=1.0):
-    s = series.dropna()
-    if s.empty: return (0.0, 1.0)
-    mn, mx = float(s.min()), float(s.max())
-    if mn == mx:
-        pad = max(abs(mn) * pad_ratio, pad_abs)
-        return (mn - pad, mx + pad)
-    return (mn, mx)
-
-def make_excel_bytes(dfs: dict) -> bytes:
-    buf = io.BytesIO()
-    with pd.ExcelWriter(buf, engine="xlsxwriter") as xw:
-        dfs.get("Estados", pd.DataFrame()).to_excel(xw, "Estados", index=False)
-        dfs.get("Calculos", pd.DataFrame()).to_excel(xw, "Calculos", index=False)
-        dfs.get("Cogeneracion", pd.DataFrame()).to_excel(xw, "Cogeneracion", index=False)
-        dfs.get("Validaciones", pd.DataFrame()).to_excel(xw, "Validaciones", index=False)
-    buf.seek(0)
-    return buf.read()
-
-# -------- página --------
-st.set_page_config(layout="wide")
-
-# logo/encabezado (igual que tu versión)
+# Encabezado institucional
 try:
-    st.columns([1,2,1])[1].image("logo_uam.png", width=300)
+    st.columns([1, 2, 1])[1].image("logo_uam.png", width=300)
 except Exception:
     pass
 
-st.markdown("""
+st.markdown(
+    """
 <div style="text-align:center; line-height:1.2;">
-  <h2> UNIVERSIDAD AUTÓNOMA METROPOLITANA</h2>
+  <h2>UNIVERSIDAD AUTÓNOMA METROPOLITANA</h2>
   <p>Proyecto Terminal</p>
   <p><strong>Asesor:</strong> 🎓 Hernando Romero Paredes Rubio &nbsp;|&nbsp;
      <strong>Alumno:</strong> 🤖 Rolando Gabriel Garza Luna</p>
 </div>
-""", unsafe_allow_html=True)
+""",
+    unsafe_allow_html=True,
+)
 
-st.title("🛠️ Simulación Ciclo Brayton + Cogeneración (full-físico)")
+st.title("Simulación Ciclo Brayton + Cogeneración")
 
-# -------- estado persistente --------
-if "dfs" not in st.session_state:
-    st.session_state.dfs = None
 
-# -------- 1) Entrada de datos --------
-st.header("1) Datos de entrada")
+# -------------------------------------------------
+# FUNCIONES AUXILIARES
+# -------------------------------------------------
+def escribir_config(
+    PCI,
+    eta_gen,
+    eta_cc,
+    modo_servicio,
+    P_serv_bar,
+    T_serv_C,
+    P_ret_bar,
+    m_dot_agua,
+    UA_HRSG,
+    T5_min_C,
+    filename="config_brayton.json",
+):
+    """
+    Crea/actualiza un archivo JSON con los parámetros de simulación.
+    BraytonRI8.py puede leer este JSON para sobreescribir sus parámetros por defecto.
+    """
+    cfg = {
+        "fluido": "Air",
+        "PCI": PCI,
+        "eta_gen": eta_gen,
+        "eta_cc": eta_cc,
+        "modo_servicio": modo_servicio,
+        "P_serv_bar": P_serv_bar,
+        "T_serv_C": T_serv_C,
+        "P_ret_bar": P_ret_bar,
+        "m_dot_agua": m_dot_agua,
+        "UA_HRSG": UA_HRSG,
+        "T5_min_C": T5_min_C,
+    }
+    with open(filename, "w", encoding="utf-8") as f:
+        json.dump(cfg, f, indent=2, ensure_ascii=False)
 
-col1, col2 = st.columns(2)
-with col1:
-    f_mun = st.file_uploader("Sube Municipios_D.xlsx", type=["xlsx"], key="mun")
-    df_mun = pd.read_excel(f_mun) if f_mun else (safe_read_excel("data/Municipios_D.xlsx") or pd.DataFrame())
-    if f_mun is None: st.caption("Si no subes archivo, intento data/Municipios_D.xlsx")
-with col2:
-    f_tur = st.file_uploader("Sube Base_de_datos_turbinas_de_gas.csv", type=["csv"], key="tur")
-    df_tur = pd.read_csv(f_tur) if f_tur else (safe_read_csv("data/Base_de_datos_turbinas_de_gas.csv") or pd.DataFrame())
-    if f_tur is None: st.caption("Si no subes archivo, intento data/Base_de_datos_turbinas_de_gas.csv")
 
-ok_inputs = (not df_mun.empty) and (not df_tur.empty)
+def encontrar_ultimo_resultado(pattern="resultados_brayton*.xlsx"):
+    """
+    Devuelve la ruta del archivo resultados_brayton*.xlsx más reciente
+    (por fecha de modificación). Si no existe, devuelve None.
+    """
+    files = glob.glob(pattern)
+    if not files:
+        return None
+    return max(files, key=os.path.getmtime)
 
-# -------- 2) Parámetros (sliders) --------
-st.header("2) Parámetros")
 
-with st.form("form_params"):
-    st.markdown("### HX & Agua")
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        U_GLOBAL = st.slider("U_GLOBAL (kW/m²·K)", 0.05, 20.0, float(w.U_GLOBAL), 0.01)
-        A_GLOBAL = st.slider("A_GLOBAL (m²)", 1.0, 50.0, float(w.A_GLOBAL), 0.5)
-        m_dot_w  = st.slider("ṁ_w (kg/s)", 0.1, 50.0, float(w.m_dot_w), 0.1)
-    with c2:
-        P7_BAR = st.slider("P7 (bar)", 2.0, 60.0, float(w.P7_BAR), 0.5)
-        P8_BAR = st.slider("P8 (bar)", 0.1, 20.0, float(w.P8_BAR), 0.1)
-        DELTA_SUBCOOL_C = st.slider("Subenfriamiento Δ (°C)", 0.0, 40.0, float(w.DELTA_SUBCOOL_C), 1.0)
-    with c3:
-        T7_USER_C = st.slider("T7 usuario (°C)", 60.0, 260.0, float(w.T7_USER_C), 1.0)
+@st.cache_data
+def cargar_resultados(path_excel: str, mtime: float):
+    """
+    Carga las hojas 'Estados' y 'Resultados' del archivo de Excel.
+    mtime solo se usa para invalidar la caché si el archivo cambia.
+    """
+    xls = pd.ExcelFile(path_excel)
+    df_estados = pd.read_excel(xls, sheet_name="Estados")
+    df_resultados = pd.read_excel(xls, sheet_name="Resultados")
+    return df_estados, df_resultados
 
-    st.markdown("### Brayton / Combustible / Restricción")
-    c4, c5, c6 = st.columns(3)
-    with c4:
-        ETA_GEN = st.slider("η_gen (-)", 0.70, 1.00, float(w.ETA_GEN), 0.01)
-        ETA_CALDERA = st.slider("η_caldera (-)", 0.50, 1.00, float(w.ETA_CALDERA), 0.01)
-    with c5:
-        PCI = st.slider("PCI (kJ/kg)", 20000, 60000, int(w.PCI), 500)
-    with c6:
-        T_GAS_OUT_MINC = st.slider("T5 mínima (°C)", 80, 180, int(w.T_GAS_OUT_MINC), 1)
 
-    submitted = st.form_submit_button("Guardar parámetros")
+def formatear_num(x, ndigits=2):
+    try:
+        return f"{float(x):.{ndigits}f}"
+    except Exception:
+        return "—"
 
-if submitted:
-    # ← asignamos directamente a las globales del motor
-    w.U_GLOBAL = float(U_GLOBAL)
-    w.A_GLOBAL = float(A_GLOBAL)
-    w.m_dot_w  = float(m_dot_w)
-    w.P7_BAR   = float(P7_BAR)
-    w.P8_BAR   = float(P8_BAR)
-    w.DELTA_SUBCOOL_C = float(DELTA_SUBCOOL_C)
-    w.T7_USER_C = float(T7_USER_C)
-    w.ETA_GEN = float(ETA_GEN)
-    w.ETA_CALDERA = float(ETA_CALDERA)
-    w.PCI = float(PCI)
-    w.T_GAS_OUT_MINC  = float(T_GAS_OUT_MINC)
-    w.T_GAS_OUT_MINK  = w.T_GAS_OUT_MINC + 273.15
-    st.success("Parámetros aplicados al motor ✅")
 
-# -------- 3) Barrido cartesiano (solo full-físico) --------
-st.header("3) Ejecutar barrido (full-físico)")
+# -------------------------------------------------
+# SIDEBAR: CARGA DE BASES + PARÁMETROS + BOTÓN
+# -------------------------------------------------
+st.sidebar.header("📂 Bases de datos de entrada")
 
-cbtn1, cbtn2 = st.columns([1,4])
-run_btn = cbtn1.button("🧮 Ejecutar", disabled=not ok_inputs)
+turbinas_file = st.sidebar.file_uploader(
+    "Base de datos de turbinas (.csv)",
+    type=["csv"],
+    help="Sube el archivo CSV con las turbinas de gas.",
+)
 
-def _run_cartesiano_full(df_mun, df_tur):
-    # compatibilidad encabezados municipio
-    dm = df_mun.copy()
-    if "Altitud (m)" not in dm.columns and "Altitud (media)" in dm.columns:
-        dm["Altitud (m)"] = dm["Altitud (media)"]
-    dm["T1 (K)"]   = dm["Temperatura (°C)"] + 273.15
-    dm["P1 (kPa)"] = dm["Presión (bares)"] * 100.0
+municipios_file = st.sidebar.file_uploader(
+    "Base de datos de municipios (.xlsx / .xls)",
+    type=["xlsx", "xls"],
+    help="Sube el archivo Excel con los municipios/localidades.",
+)
 
-    dt = df_tur.copy()
+st.sidebar.markdown("---")
+st.sidebar.header("⚙️ Parámetros de simulación")
 
-    # producto cartesiano
-    dm["_k"]=1; dt["_k"]=1
-    cross = pd.merge(dm, dt, on="_k").drop(columns="_k")
+st.sidebar.markdown("**Parámetros del ciclo / combustible**")
+PCI = st.sidebar.number_input(
+    "PCI [kJ/kg]",
+    min_value=10000.0,
+    max_value=70000.0,
+    value=55090.0,
+    step=100.0,
+)
+eta_gen = st.sidebar.slider("Eficiencia del generador η_gen", 0.5, 1.0, 0.98, 0.01)
+eta_cc = st.sidebar.slider(
+    "Eficiencia de cámara de combustión η_cc", 0.5, 1.0, 0.95, 0.01
+)
 
-    estados, calculos, cogener = [], [], []
+st.sidebar.markdown("---")
+st.sidebar.markdown("**Parámetros de cogeneración / HRSG**")
 
-    rho_ISO = PropsSI("D","T",288.15,"P",101325.0,"Air")
-    for _, r in cross.iterrows():
-        # derating por densidad local
-        rho_loc = PropsSI("D","T", float(r["T1 (K)"]), "P", float(r["P1 (kPa)"])*1000.0, "Air")
-        m_ISO   = float(r.get("m_aire (kg/s)", r.get("m_aire_kg_s", 0.0)))
-        m_loc   = m_ISO * (rho_loc/rho_ISO)
+modo_servicio = st.sidebar.selectbox(
+    "Modo de servicio (solo informativo)", ["vapor", "agua"], index=0
+)
 
-        est, calc, cog = w.simular_ciclo_mdot(
-            T1=float(r["T1 (K)"]),
-            P1_kPa=float(r["P1 (kPa)"]),
-            r_p=float(r["r_p"]),
-            T3=float(r["T3 (C)"]) + 273.15,
-            eta_c=float(r["eta_c"]),
-            eta_t=float(r["eta_t"]),
-            m_dot_gas=float(m_loc),
-            p7_bar=float(w.P7_BAR),
-            p8_bar=float(w.P8_BAR),
-            delta_subcool_c=float(w.DELTA_SUBCOOL_C),
-            t7_user_c=float(w.T7_USER_C),
+P_serv_bar = st.sidebar.slider(
+    "Presión de servicio P6 = P7 [bar abs]", 2.0, 40.0, 10.0, 0.5
+)
+T_serv_C = st.sidebar.slider(
+    "Temperatura de servicio T7 [°C]", 80.0, 400.0, 180.0, 5.0
+)
+P_ret_bar = st.sidebar.slider(
+    "Presión de retorno P8 [bar abs]", 1.0, 5.0, 2.0, 0.5
+)
+m_dot_agua = st.sidebar.slider(
+    "Caudal de agua ṁ_agua [kg/s]", 0.5, 50.0, 5.0, 0.5
+)
+UA_HRSG = st.sidebar.slider(
+    "UA_HRSG [kJ/s·K]", 100.0, 5000.0, 1500.0, 50.0
+)
+T5_min_C = st.sidebar.slider(
+    "T5 mínima (gases salida HRSG) [°C]", 80.0, 200.0, 100.0, 5.0
+)
+
+st.sidebar.markdown("---")
+run_button = st.sidebar.button("🚀 Ejecutar simulación")
+
+
+# -------------------------------------------------
+# EJECUTAR LA SIMULACIÓN SI SE PULSA EL BOTÓN
+# -------------------------------------------------
+if run_button:
+    # 1) Validar que se subieron ambos archivos (o ya existan en la carpeta)
+    base_turb_name = "Base_de_datos_turbinas_de_gas.csv"
+    base_mpios_name = "Municipios_D.xlsx"
+
+    if turbinas_file is not None:
+        # Guardar el CSV subido con el nombre que espera BraytonRI8.py
+        with open(base_turb_name, "wb") as f:
+            f.write(turbinas_file.getbuffer())
+    elif not os.path.exists(base_turb_name):
+        st.error(
+            "No se encontró la base de turbinas.\n\n"
+            "Por favor, sube un archivo CSV con los datos de las turbinas."
+        )
+        st.stop()
+
+    if municipios_file is not None:
+        # Guardar el Excel subido con el nombre que espera BraytonRI8.py
+        with open(base_mpios_name, "wb") as f:
+            f.write(municipios_file.getbuffer())
+    elif not os.path.exists(base_mpios_name):
+        st.error(
+            "No se encontró la base de municipios.\n\n"
+            "Por favor, sube un archivo Excel con los datos de los municipios."
+        )
+        st.stop()
+
+    # 2) Escribir archivo de configuración (para que BraytonRI8 use estos parámetros)
+    escribir_config(
+        PCI=PCI,
+        eta_gen=eta_gen,
+        eta_cc=eta_cc,
+        modo_servicio=modo_servicio,
+        P_serv_bar=P_serv_bar,
+        T_serv_C=T_serv_C,
+        P_ret_bar=P_ret_bar,
+        m_dot_agua=m_dot_agua,
+        UA_HRSG=UA_HRSG,
+        T5_min_C=T5_min_C,
+    )
+
+    # 3) Ejecutar BraytonRI8.py con el mismo intérprete que está corriendo Streamlit
+    with st.spinner("Ejecutando simulación Brayton + Cogeneración..."):
+        try:
+            result = subprocess.run(
+                [sys.executable, "BraytonRI8.py"],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            st.success("Simulación completada correctamente.")
+            if result.stdout:
+                with st.expander("Ver salida de consola del modelo"):
+                    st.text(result.stdout)
+            if result.stderr:
+                with st.expander("Ver mensajes de advertencia / error"):
+                    st.text(result.stderr)
+        except subprocess.CalledProcessError as e:
+            st.error("Ocurrió un error al ejecutar BraytonRI8.py")
+            st.code(e.stderr or str(e))
+            st.stop()
+
+# -------------------------------------------------
+# CARGAR EL ÚLTIMO RESULTADO DISPONIBLE
+# -------------------------------------------------
+ultimo_archivo = encontrar_ultimo_resultado()
+
+if not ultimo_archivo:
+    st.warning(
+        "Aún no hay archivos 'resultados_brayton*.xlsx' en la carpeta.\n\n"
+        "Sube tus bases y ejecuta primero la simulación desde la barra lateral."
+    )
+    st.stop()
+
+mtime = os.path.getmtime(ultimo_archivo)
+st.info(f"Usando archivo de resultados: **{os.path.basename(ultimo_archivo)}**")
+
+df_estados, df_resultados = cargar_resultados(ultimo_archivo, mtime)
+
+# -------------------------------------------------
+# DESCARGA DE HOJAS COMPLETAS
+# -------------------------------------------------
+st.subheader("💾 Descargar resultados completos")
+
+col_d1, col_d2 = st.columns(2)
+
+with col_d1:
+    csv_est = df_estados.to_csv(index=False).encode("utf-8")
+    st.download_button(
+        "⬇️ Descargar hoja 'Estados' (CSV)",
+        data=csv_est,
+        file_name="Estados_brayton.csv",
+        mime="text/csv",
+    )
+
+with col_d2:
+    csv_res = df_resultados.to_csv(index=False).encode("utf-8")
+    st.download_button(
+        "⬇️ Descargar hoja 'Resultados' (CSV)",
+        data=csv_res,
+        file_name="Resultados_brayton.csv",
+        mime="text/csv",
+    )
+
+st.markdown("---")
+
+# -------------------------------------------------
+# FILTROS: TURBINA Y MUNICIPIO PARA VER DETALLE
+# -------------------------------------------------
+st.subheader("🔍 Análisis detallado por turbina y municipio")
+
+turbinas = sorted(df_resultados["Turbina"].unique())
+t_col1, t_col2 = st.columns(2)
+with t_col1:
+    turbina_sel = st.selectbox("Turbina:", turbinas)
+
+df_res_turb = df_resultados[df_resultados["Turbina"] == turbina_sel]
+
+municipios = sorted(df_res_turb["Municipio"].unique())
+with t_col2:
+    municipio_sel = st.selectbox("Municipio:", municipios)
+
+df_res_sel = df_res_turb[df_res_turb["Municipio"] == municipio_sel]
+if df_res_sel.empty:
+    st.warning("No hay resultados para esa combinación turbina/municipio.")
+    st.stop()
+
+fila = df_res_sel.iloc[0]
+
+df_est_sel = df_estados[
+    (df_estados["Turbina"] == turbina_sel)
+    & (df_estados["Municipio"] == municipio_sel)
+].sort_values("Estado")
+
+# -------------------------------------------------
+# PANEL DE MÉTRICAS LOCALES
+# -------------------------------------------------
+st.subheader("📊 Resumen del punto de operación seleccionado")
+
+col1, col2, col3, col4 = st.columns(4)
+
+col1.metric(
+    "Potencia eléctrica neta [kW]",
+    formatear_num(fila.get("P_elec [kW]"), 1),
+)
+col2.metric(
+    "η ciclo [%]",
+    formatear_num(fila.get("Eficiencia_ciclo [%]"), 1),
+)
+col3.metric(
+    "η cogeneración [%]",
+    formatear_num(fila.get("Eficiencia_cogeneracion [%]"), 1),
+)
+col4.metric(
+    "Q_user [kW]",
+    formatear_num(fila.get("Q_user [kW]"), 1),
+)
+
+col5, col6, col7, col8 = st.columns(4)
+col5.metric(
+    "Heat Rate real [kJ/kWh]",
+    formatear_num(fila.get("HeatRate_real (kJ/kWh)"), 1),
+)
+col6.metric(
+    "Altitud media [m]",
+    formatear_num(fila.get("Altitud (media) [m]"), 1),
+)
+col7.metric(
+    "T_municipio [°C]",
+    formatear_num(fila.get("Temperatura_mpio [°C]"), 1),
+)
+col8.metric(
+    "Derate potencia [-]",
+    formatear_num(fila.get("Derate_P [-]"), 3),
+)
+
+# -------------------------------------------------
+# ESTADOS TERMODINÁMICOS 1–8
+# -------------------------------------------------
+st.subheader("📋 Estados termodinámicos (1–8)")
+
+if df_est_sel.empty:
+    st.info(
+        "Para esta combinación turbina/municipio solo se tienen estados 1–4 "
+        "(no hubo cogeneración factible)."
+    )
+else:
+    cols_orden = ["Estado", "T [K]", "P [Pa]", "h [kJ/kg]", "s [kJ/kg·K]"]
+    cols_extra = [
+        c
+        for c in df_est_sel.columns
+        if c not in cols_orden and c not in ["Turbina", "Municipio"]
+    ]
+    df_mostrar = df_est_sel[["Turbina", "Municipio"] + cols_orden + cols_extra]
+
+    st.dataframe(
+        df_mostrar.reset_index(drop=True),
+        use_container_width=True,
+        height=350,
+    )
+
+# -------------------------------------------------
+# GRÁFICAS: TODAS LAS TURBINAS, TODOS LOS MUNICIPIOS
+# -------------------------------------------------
+st.subheader("📈 Gráficas globales (todas las turbinas, todos los municipios)")
+
+tab1, tab2, tab3 = st.tabs(
+    [
+        "Potencia vs Altitud",
+        "Heat Rate / eficiencias vs Temperatura ambiente",
+        "Scatter 3D: P_elec vs HR vs Altitud",
+    ]
+)
+
+with tab1:
+    st.markdown("**Potencia eléctrica vs altitud (todas las turbinas)**")
+    fig_p_alt = px.scatter(
+        df_resultados,
+        x="Altitud (media) [m]",
+        y="P_elec [kW]",
+        color="Turbina",
+        hover_data=[
+            "Municipio",
+            "Eficiencia_ciclo [%]",
+            "Eficiencia_cogeneracion [%]",
+        ],
+        labels={
+            "Altitud (media) [m]": "Altitud [m]",
+            "P_elec [kW]": "Potencia eléctrica [kW]",
+        },
+    )
+    st.plotly_chart(fig_p_alt, use_container_width=True)
+
+with tab2:
+    st.markdown("**Heat Rate vs Temperatura ambiente**")
+    fig_hr_T = px.scatter(
+        df_resultados,
+        x="Temperatura_mpio [°C]",
+        y="HeatRate_real (kJ/kWh)",
+        color="Turbina",
+        hover_data=["Municipio", "Altitud (media) [m]"],
+        labels={
+            "Temperatura_mpio [°C]": "Temperatura ambiente [°C]",
+            "HeatRate_real (kJ/kWh)": "Heat Rate real [kJ/kWh]",
+        },
+    )
+    st.plotly_chart(fig_hr_T, use_container_width=True)
+
+    st.markdown("**η ciclo vs Temperatura ambiente**")
+    fig_eta_T = px.scatter(
+        df_resultados,
+        x="Temperatura_mpio [°C]",
+        y="Eficiencia_ciclo [%]",
+        color="Turbina",
+        hover_data=["Municipio", "Eficiencia_cogeneracion [%]"],
+        labels={"Temperatura_mpio [°C]": "Temperatura ambiente [°C]"},
+    )
+    st.plotly_chart(fig_eta_T, use_container_width=True)
+
+with tab3:
+    st.markdown("**Potencia eléctrica vs Heat Rate vs Altitud (3D)**")
+    fig_3d = px.scatter_3d(
+        df_resultados,
+        x="Altitud (media) [m]",
+        y="HeatRate_real (kJ/kWh)",
+        z="P_elec [kW]",
+        color="Turbina",
+        hover_name="Turbina",
+        hover_data=["Municipio", "Eficiencia_cogeneracion [%]"],
+        labels={
+            "Altitud (media) [m]": "Altitud [m]",
+            "HeatRate_real (kJ/kWh)": "Heat Rate [kJ/kWh]",
+            "P_elec [kW]": "Potencia [kW]",
+        },
+    )
+    st.plotly_chart(fig_3d, use_container_width=True)
+
+# -------------------------------------------------
+# ANÁLISIS ESTADÍSTICO GLOBAL
+# -------------------------------------------------
+st.subheader("📊 Análisis estadístico global")
+
+tab_est1, tab_est2, tab_est3 = st.tabs(
+    [
+        "Resumen por turbina",
+        "Matriz de correlación (heatmap)",
+        "Histograma de η de cogeneración",
+    ]
+)
+
+with tab_est1:
+    st.markdown("### 📌 Estadísticos descriptivos por turbina")
+
+    # Elegimos algunas columnas numéricas de interés
+    cols_stats = [
+        "P_elec [kW]",
+        "Eficiencia_ciclo [%]",
+        "Eficiencia_cogeneracion [%]",
+        "HeatRate_real (kJ/kWh)",
+    ]
+
+    # Nos quedamos solo con las columnas que existan en el DataFrame
+    cols_stats = [c for c in cols_stats if c in df_resultados.columns]
+
+    if not cols_stats:
+        st.info("No se encontraron columnas numéricas esperadas para el resumen.")
+    else:
+        df_stats = (
+            df_resultados.groupby("Turbina")[cols_stats]
+            .agg(["mean", "std", "min", "max"])
         )
 
-        # etiquetas
-        est.insert(0, "Municipio", r["Municipio"]); est.insert(1, "Turbina", r["Turbina"])
-        calc.update({
-            "Municipio": r["Municipio"], "Turbina": r["Turbina"],
-            "Altitud (m)": r.get("Altitud (m)", float("nan")),
-            "rho_local (kg/m3)": rho_loc, "m_dot_ISO_design (kg/s)": m_ISO, "m_dot_local (kg/s)": m_loc
-        })
-        cog.update({"Municipio": r["Municipio"], "Turbina": r["Turbina"], "Altitud (m)": r.get("Altitud (m)", float("nan"))})
+        # Opcional: redondear para que se vea más bonito
+        df_stats = df_stats.round(2)
 
-        estados.append(est); calculos.append(calc); cogener.append(cog)
+        st.dataframe(df_stats, use_container_width=True)
 
-    df_est = pd.concat(estados, ignore_index=True) if estados else pd.DataFrame()
-    df_calc = pd.DataFrame(calculos)
-    df_cog  = pd.DataFrame(cogener)
+        st.markdown(
+            """
+**Interpretación:**  
+- Compara medias y desviaciones estándar entre turbinas para ver cuáles
+  son más eficientes y cuáles tienen resultados más dispersos.  
+"""
+        )
 
-    # validaciones mínimas (las que usa tu motor)
-    valid = df_cog[[
-        "Municipio","Turbina","Altitud (m)","Temp_GC_OK","Temp_usuario_OK","Semaforo_HX"
-    ]].copy() if not df_cog.empty else pd.DataFrame()
+with tab_est2:
+    st.markdown("### 🔥 Matriz de correlación")
 
-    return df_est, df_calc, df_cog, valid
+    # Seleccionamos algunas variables continuas relevantes
+    cols_corr = [
+        "Altitud (media) [m]",
+        "Temperatura_mpio [°C]",
+        "P_elec [kW]",
+        "HeatRate_real (kJ/kWh)",
+        "Eficiencia_ciclo [%]",
+        "Eficiencia_cogeneracion [%]",
+    ]
+    cols_corr = [c for c in cols_corr if c in df_resultados.columns]
 
-if run_btn:
-    with st.spinner("Corriendo…"):
-        df_est, df_calc, df_cog, df_valid = _run_cartesiano_full(df_mun, df_tur)
-    st.session_state.dfs = {
-        "Estados": df_est, "Calculos": df_calc,
-        "Cogeneracion": df_cog, "Validaciones": df_valid
-    }
-    st.success(f"Listo: {len(df_calc)} casos.")
-
-# -------- 4) Mostrar tablas + descarga --------
-dfs_now = st.session_state.dfs
-if dfs_now:
-    tab1, tab2, tab3, tab4 = st.tabs(["Estados", "Cálculos", "Cogeneración", "Validaciones"])
-    with tab1: st.dataframe(dfs_now["Estados"], use_container_width=True)
-    with tab2: st.dataframe(dfs_now["Calculos"], use_container_width=True)
-    with tab3: st.dataframe(dfs_now["Cogeneracion"], use_container_width=True)
-    with tab4: st.dataframe(dfs_now["Validaciones"], use_container_width=True)
-
-    st.download_button(
-        "⬇️ Descargar Excel",
-        data=make_excel_bytes(dfs_now),
-        file_name="Resultados_Ciclo_Brayton.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    )
-
-# -------- 5) Filtros + gráficas (igual que antes) --------
-st.divider()
-st.header("4) Filtros para gráficas")
-
-if not dfs_now:
-    st.info("No hay resultados. Ejecuta primero el barrido.")
-else:
-    df_calc = dfs_now["Calculos"].copy()
-    df_cog  = dfs_now["Cogeneracion"].copy()
-
-    # derivados útiles
-    PCI_val = float(getattr(w, "PCI", 50000.0))
-    dfG = df_calc.copy()
-    if "Altitud (m)" not in dfG.columns:
-        if "P1 (kPa)" in dfG.columns:
-            P_Pa = dfG["P1 (kPa)"]*1000.0
-            dfG["Altitud (m)"] = 44330.0 * (1.0 - (P_Pa/101325.0)**0.1903)
-        else:
-            dfG["Altitud (m)"] = float("nan")
-    if "m_dot_fuel (kg/s)" in dfG.columns:
-        dfG["Q_in (kW)"] = dfG["m_dot_fuel (kg/s)"] * PCI_val
+    if len(cols_corr) < 2:
+        st.info("No hay suficientes variables numéricas para calcular correlaciones.")
     else:
-        dfG["Q_in (kW)"] = float("nan")
-    if "P_elec (kW)" not in dfG.columns and "P_net (kW)" in dfG.columns:
-        dfG["P_elec (kW)"] = dfG["P_net (kW)"]
+        df_corr = df_resultados[cols_corr].corr()
 
-    # controles
-    with st.expander("Controles de visualización", expanded=True):
-        c1, c2, c3 = st.columns([1,1,1])
-        with c1:
-            pot_choice = st.radio("Potencia a graficar", ["P_elec (kW)","P_net (kW)"], index=0, horizontal=True)
-        with c2:
-            eta_choice = st.radio("Eficiencia", ["eta_cog_global (%)","eta_ciclo_electrico (%)"], index=0, horizontal=True)
-        with c3:
-            show_heatmap = st.checkbox("Heatmap", value=False)
+        st.write("Correlaciones lineales entre variables seleccionadas:")
+        st.dataframe(df_corr.round(2), use_container_width=True)
 
-        c4, c5 = st.columns(2)
-        with c4:
-            muni_sel = st.multiselect("Municipios", sorted(dfG["Municipio"].dropna().unique().tolist()))
-        with c5:
-            turb_sel = st.multiselect("Turbinas", sorted(dfG["Turbina"].dropna().unique().tolist()))
+        # Heatmap con Plotly
+        fig_corr = px.imshow(
+            df_corr,
+            text_auto=True,
+            aspect="auto",
+            labels=dict(color="Correlación"),
+        )
+        st.plotly_chart(fig_corr, use_container_width=True)
 
-        c6, c7 = st.columns(2)
-        with c6:
-            pmin, pmax = safe_range(dfG[pot_choice]); pot_rng = st.slider(f"Rango {pot_choice}", pmin, pmax, (pmin, pmax))
-        with c7:
-            emin, emax = safe_range(dfG[eta_choice]); eta_rng = st.slider(f"Rango {eta_choice}", emin, emax, (emin, emax))
+        st.markdown(
+            """
+**Interpretación:**  
+- Valores cercanos a **+1** indican relación directa fuerte.  
+- Valores cercanos a **−1** indican relación inversa fuerte.  
+"""
+        )
 
-        c8, c9 = st.columns(2)
-        with c8:
-            hmin, hmax = safe_range(dfG["Altitud (m)"]); alt_rng = st.slider("Rango Altitud (m)", hmin, hmax, (hmin, hmax))
-        with c9:
-            smin, smax = safe_range(dfG.get("SFC_elec (kg/kWh)", pd.Series([0,1]))); sfc_rng = st.slider("Rango SFC (kg/kWh)", smin, smax, (smin, smax))
+with tab_est3:
+    st.markdown("### 📊 Histograma de eficiencia de cogeneración")
 
-        only_ok = st.checkbox("Solo casos OK (Temp_GC_OK y Temp_usuario_OK)", value=False)
+    col_hist1, col_hist2 = st.columns([2, 1])
 
-    # filtro
-    mask = (
-        dfG[pot_choice].between(*pot_rng)
-        & dfG[eta_choice].between(*eta_rng)
-        & dfG["Altitud (m)"].between(*alt_rng)
-    )
-    if "SFC_elec (kg/kWh)" in dfG.columns:
-        mask &= dfG["SFC_elec (kg/kWh)"].between(*sfc_rng)
-    if muni_sel: mask &= dfG["Municipio"].isin(muni_sel)
-    if turb_sel: mask &= dfG["Turbina"].isin(turb_sel)
-    if only_ok and {"Temp_GC_OK","Temp_usuario_OK"}.issubset(dfG.columns):
-        mask &= (dfG["Temp_GC_OK"].astype(bool) & dfG["Temp_usuario_OK"].astype(bool))
+    col_target = "Eficiencia_cogeneracion [%]"
+    if col_target not in df_resultados.columns:
+        st.info("No se encontró la columna 'Eficiencia_cogeneracion [%]' en los resultados.")
+    else:
+        with col_hist1:
+            fig_hist = px.histogram(
+                df_resultados,
+                x=col_target,
+                color="Turbina",
+                nbins=30,
+                labels={col_target: "Eficiencia de cogeneración [%]"},
+            )
+            st.plotly_chart(fig_hist, use_container_width=True)
 
-    dff = dfG.loc[mask].copy()
-    st.caption(f"Filtrado activo → {len(dff)} filas")
+        with col_hist2:
+            st.markdown("#### Parámetros básicos")
+            st.write(
+                df_resultados[col_target].describe().round(2).to_frame(name=col_target)
+            )
 
-    # paleta estable por turbina
-    base_palette = px.colors.qualitative.Plotly + px.colors.qualitative.D3 + px.colors.qualitative.Set2 + px.colors.qualitative.Dark24
-    turbinas = sorted(dfG["Turbina"].dropna().unique().tolist())
-    turb_color_map = {t: base_palette[i % len(base_palette)] for i, t in enumerate(turbinas)}
-    sym = "Semaforo_HX" if "Semaforo_HX" in dff.columns else None
+        st.markdown(
+            """
+**Interpretación:**  
+- En qué rango se concentra la mayor parte de la eficiencia de cogeneración.  
+- El color por turbina permite ver si hay modelos que tienden a operar
+  sistemáticamente mejor que otros.
+"""
+        )
 
-    # gráficas
-    def tune(fig, title):
-        fig.update_layout(title=title, legend=dict(title="Turbina", itemclick="toggle", itemdoubleclick="toggleothers"))
-        return fig
-
-    hv_cols = [c for c in ["Municipio","Turbina","Altitud (m)","eta_cog_global (%)","SFC_elec (kg/kWh)","Q_in (kW)","P_elec (kW)","P_net (kW)"] if c in dff.columns]
-
-    st.header("5) Gráficas")
-    st.plotly_chart(tune(px.scatter(dff, x=pot_choice, y=eta_choice, color="Turbina",
-                                    color_discrete_map=turb_color_map, symbol=sym, hover_data=hv_cols),
-                         "Pot vs Eficiencia"), use_container_width=True)
-
-    if "Q_user (kW)" in dff.columns:
-        st.plotly_chart(tune(px.scatter(dff, x="Q_in (kW)", y="Q_user (kW)", color="Turbina",
-                                        color_discrete_map=turb_color_map, symbol=sym, hover_data=hv_cols),
-                             "Q útil vs Q_in"), use_container_width=True)
-
-    st.plotly_chart(tune(px.scatter(dff, x="Q_in (kW)", y=pot_choice, color="Turbina",
-                                    color_discrete_map=turb_color_map, symbol=sym, hover_data=hv_cols),
-                         "Pot vs Q_in"), use_container_width=True)
-
-    if "SFC_elec (kg/kWh)" in dff.columns:
-        st.plotly_chart(tune(px.scatter(dff, x=pot_choice, y="SFC_elec (kg/kWh)", color="Turbina",
-                                        color_discrete_map=turb_color_map, symbol=sym, hover_data=hv_cols),
-                             "SFC vs Pot"), use_container_width=True)
-
-    if "eta_cog_global (%)" in dff.columns:
-        st.plotly_chart(tune(px.scatter(dff, x="Altitud (m)", y="eta_cog_global (%)", color="Turbina",
-                                        color_discrete_map=turb_color_map, symbol=sym, hover_data=hv_cols),
-                             "η_global vs Altitud"), use_container_width=True)
-
-    if "Q_user (kW)" in dff.columns:
-        st.plotly_chart(tune(px.scatter(dff, x="Altitud (m)", y="Q_user (kW)", color="Turbina",
-                                        color_discrete_map=turb_color_map, symbol=sym, hover_data=hv_cols),
-                             "Q_rec vs Altitud"), use_container_width=True)
-
-    # 3D opcional
-    try:
-        st.plotly_chart(tune(px.scatter_3d(dff, x=pot_choice, y="Altitud (m)", z="SFC_elec (kg/kWh)",
-                                           color="Turbina", color_discrete_map=turb_color_map,
-                                           symbol=sym, hover_name="Turbina", hover_data=hv_cols),
-                             "3D Pot–Alt–SFC"), use_container_width=True)
-    except Exception:
-        pass
-
-    # Heatmap opcional
-    if show_heatmap and "eta_cog_global (%)" in dff.columns:
-        hm = px.density_heatmap(dff, x=pot_choice, y="Altitud (m)", z="eta_cog_global (%)",
-                                nbinsx=25, nbinsy=25, histfunc="avg",
-                                title="Heatmap: promedio de η_global en celdas Pot×Alt")
-        st.plotly_chart(hm, use_container_width=True)
