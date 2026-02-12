@@ -5,6 +5,10 @@ Created on Thu Oct 16 02:32:09 2025
 @author: Gabo San
 """
 
+# app.py
+# Interfaz en Streamlit para correr BraytonRI8.py y visualizar resultados
+# Pensada para usuarios que NO programan: suben sus bases, mueven sliders y listo.
+
 import os
 import glob
 import json
@@ -469,194 +473,194 @@ with tab4:
     st.subheader("Indicadores de cogeneración vs potencia eléctrica")
     st.caption("Q/E usa Q_user [kW] (calor útil entregado al usuario) y P_elec [kW].")
 
-    df_plot = df_filtrado.copy()
+    df_plot = df_resultados.copy()  # usar todos los resultados; se filtra más abajo
     if df_plot.empty:
         st.info("No hay datos para graficar con el filtro actual.")
-
-
-    # Asegurar columna Q/E en el dataframe filtrado
-    if ("Q_E [-]" not in df_plot.columns) and ("Q_user [kW]" in df_plot.columns) and ("P_elec [kW]" in df_plot.columns):
-        denom = df_plot["P_elec [kW]"].where(df_plot["P_elec [kW]"] != 0)
-        df_plot["Q_E [-]"] = (df_plot["Q_user [kW]"] / denom).replace([float('inf'), float('-inf')], pd.NA)
-
-    hover_cols = [
-        "Turbina",
-        "Emplazamiento",
-        "Altitud (media) [m]",
-        "Temperatura_emplz [°C]",
-        "Presión_emplz [bar]",
-        "Q_gc_HRSG [kW]",
-        "Q_user [kW]",
-        "Q_E [-]",
-        "Eficiencia_ciclo [%]",
-        "Eficiencia_cogeneracion [%]",
-        "HeatRate_real (kJ/kWh)",
-        "Derate_P [-]",
-    ]
-    hover_cols = [c for c in hover_cols if c in df_plot.columns]
-
-    # 1) Q/E vs Potencia eléctrica
-    if ("Q_E [-]" in df_plot.columns) and ("P_elec [kW]" in df_plot.columns):
-        fig_qe = px.scatter(
-            df_plot,
-            x="P_elec [kW]",
-            y="Q_E [-]",
-            color="Turbina" if "Turbina" in df_plot.columns else None,
-            hover_data=hover_cols,
-            labels={"P_elec [kW]": "Potencia eléctrica [kW]", "Q_E [-]": "Q/E [-]"},
-        )
-        fig_qe.update_layout(title="Q/E vs Potencia eléctrica")
-        st.plotly_chart(fig_qe, use_container_width=True)
     else:
-        st.warning("No se pudieron calcular/graficar Q/E porque faltan las columnas Q_user [kW] y/o P_elec [kW].")
 
-    # 2) Eficiencia de cogeneración vs Potencia eléctrica
-    if ("Eficiencia_cogeneracion [%]" in df_plot.columns) and ("P_elec [kW]" in df_plot.columns):
-        fig_eta_cog = px.scatter(
-            df_plot,
-            x="P_elec [kW]",
-            y="Eficiencia_cogeneracion [%]",
-            color="Turbina" if "Turbina" in df_plot.columns else None,
-            hover_data=hover_cols,
-            labels={"P_elec [kW]": "Potencia eléctrica [kW]", "Eficiencia_cogeneracion [%]": "η_cog [%]"},
-        )
-        fig_eta_cog.update_layout(title="Eficiencia de cogeneración (η_cog) vs Potencia eléctrica")
-        st.plotly_chart(fig_eta_cog, use_container_width=True)
-    else:
-        st.warning("No se pudo graficar η_cog vs potencia porque faltan las columnas requeridas.")
+        # Asegurar columna Q/E en el dataframe filtrado
+        if ("Q_E [-]" not in df_plot.columns) and ("Q_user [kW]" in df_plot.columns) and ("P_elec [kW]" in df_plot.columns):
+            denom = df_plot["P_elec [kW]"].where(df_plot["P_elec [kW]"] != 0)
+            df_plot["Q_E [-]"] = (df_plot["Q_user [kW]"] / denom).replace([float('inf'), float('-inf')], pd.NA)
 
-    # 3) Eficiencia eléctrica (η_el ≈ η_ciclo) vs Potencia eléctrica
-    if ("Eficiencia_ciclo [%]" in df_plot.columns) and ("P_elec [kW]" in df_plot.columns):
-        fig_eta_el = px.scatter(
-            df_plot,
-            x="P_elec [kW]",
-            y="Eficiencia_ciclo [%]",
-            color="Turbina" if "Turbina" in df_plot.columns else None,
-            hover_data=hover_cols,
-            labels={"P_elec [kW]": "Potencia eléctrica [kW]", "Eficiencia_ciclo [%]": "η_el [%]"},
-        )
-        fig_eta_el.update_layout(title="Eficiencia eléctrica (η_el ≈ η_ciclo) vs Potencia eléctrica")
-        st.plotly_chart(fig_eta_el, use_container_width=True)
-    else:
-        st.warning("No se pudo graficar η_el vs potencia porque faltan las columnas requeridas.")
+        hover_cols = [
+            "Turbina",
+            "Emplazamiento",
+            "Altitud (media) [m]",
+            "Temperatura_emplz [°C]",
+            "Presión_emplz [bar]",
+            "Q_gc_HRSG [kW]",
+            "Q_user [kW]",
+            "Q_E [-]",
+            "Eficiencia_ciclo [%]",
+            "Eficiencia_cogeneracion [%]",
+            "HeatRate_real (kJ/kWh)",
+            "Derate_P [-]",
+        ]
+        hover_cols = [c for c in hover_cols if c in df_plot.columns]
 
-# -------------------------------------------------
-# ANÁLISIS ESTADÍSTICO GLOBAL
-# -------------------------------------------------
-st.subheader("Análisis estadístico global")
-
-tab_est1, tab_est2, tab_est3 = st.tabs(
-    [
-        "Resumen por turbina",
-        "Matriz de correlación (heatmap)",
-        "Histograma de η de cogeneración",
-    ]
-)
-
-with tab_est1:
-    st.markdown("### Estadísticos descriptivos por turbina")
-
-    # Elegimos algunas columnas numéricas de interés
-    cols_stats = [
-        "P_elec [kW]",
-        "Eficiencia_ciclo [%]",
-        "Eficiencia_cogeneracion [%]",
-        "HeatRate_real (kJ/kWh)",
-    ]
-
-    # Nos quedamos solo con las columnas que existan en el DataFrame
-    cols_stats = [c for c in cols_stats if c in df_resultados.columns]
-
-    if not cols_stats:
-        st.info("No se encontraron columnas numéricas esperadas para el resumen.")
-    else:
-        df_stats = (
-            df_resultados.groupby("Turbina")[cols_stats]
-            .agg(["mean", "std", "min", "max"])
-        )
-
-        # Opcional: redondear para que se vea más bonito
-        df_stats = df_stats.round(2)
-
-        st.dataframe(df_stats, use_container_width=True)
-
-        st.markdown(
-            """
-**Interpretación:**  
-- Compara medias y desviaciones estándar entre turbinas para ver cuáles
-  son más eficientes y cuáles tienen resultados más dispersos.  
-"""
-        )
-
-with tab_est2:
-    st.markdown("### Matriz de correlación")
-
-    # Seleccionamos algunas variables continuas relevantes
-    cols_corr = [
-        "Altitud (media) [m]",
-        "Temperatura_emplz [°C]",
-        "P_elec [kW]",
-        "HeatRate_real (kJ/kWh)",
-        "Eficiencia_ciclo [%]",
-        "Eficiencia_cogeneracion [%]",
-    ]
-    cols_corr = [c for c in cols_corr if c in df_resultados.columns]
-
-    if len(cols_corr) < 2:
-        st.info("No hay suficientes variables numéricas para calcular correlaciones.")
-    else:
-        df_corr = df_resultados[cols_corr].corr()
-
-        st.write("Correlaciones lineales entre variables seleccionadas:")
-        st.dataframe(df_corr.round(2), use_container_width=True)
-
-        # Heatmap con Plotly
-        fig_corr = px.imshow(
-            df_corr,
-            text_auto=True,
-            aspect="auto",
-            labels=dict(color="Correlación"),
-        )
-        st.plotly_chart(fig_corr, use_container_width=True)
-
-        st.markdown(
-            """
-**Interpretación:**  
-- Valores cercanos a **+1** indican relación directa fuerte.  
-- Valores cercanos a **−1** indican relación inversa fuerte.  
-"""
-        )
-
-with tab_est3:
-    st.markdown("### Histograma de eficiencia de cogeneración")
-
-    col_hist1, col_hist2 = st.columns([2, 1])
-
-    col_target = "Eficiencia_cogeneracion [%]"
-    if col_target not in df_resultados.columns:
-        st.info("No se encontró la columna 'Eficiencia_cogeneracion [%]' en los resultados.")
-    else:
-        with col_hist1:
-            fig_hist = px.histogram(
-                df_resultados,
-                x=col_target,
-                color="Turbina",
-                nbins=30,
-                labels={col_target: "Eficiencia de cogeneración [%]"},
+        # 1) Q/E vs Potencia eléctrica
+        if ("Q_E [-]" in df_plot.columns) and ("P_elec [kW]" in df_plot.columns):
+            fig_qe = px.scatter(
+                df_plot,
+                x="P_elec [kW]",
+                y="Q_E [-]",
+                color="Turbina" if "Turbina" in df_plot.columns else None,
+                hover_data=hover_cols,
+                labels={"P_elec [kW]": "Potencia eléctrica [kW]", "Q_E [-]": "Q/E [-]"},
             )
-            st.plotly_chart(fig_hist, use_container_width=True)
+            fig_qe.update_layout(title="Q/E vs Potencia eléctrica")
+            st.plotly_chart(fig_qe, use_container_width=True)
+        else:
+            st.warning("No se pudieron calcular/graficar Q/E porque faltan las columnas Q_user [kW] y/o P_elec [kW].")
 
-        with col_hist2:
-            st.markdown("#### Parámetros básicos")
-            st.write(
-                df_resultados[col_target].describe().round(2).to_frame(name=col_target)
+        # 2) Eficiencia de cogeneración vs Potencia eléctrica
+        if ("Eficiencia_cogeneracion [%]" in df_plot.columns) and ("P_elec [kW]" in df_plot.columns):
+            fig_eta_cog = px.scatter(
+                df_plot,
+                x="P_elec [kW]",
+                y="Eficiencia_cogeneracion [%]",
+                color="Turbina" if "Turbina" in df_plot.columns else None,
+                hover_data=hover_cols,
+                labels={"P_elec [kW]": "Potencia eléctrica [kW]", "Eficiencia_cogeneracion [%]": "η_cog [%]"},
+            )
+            fig_eta_cog.update_layout(title="Eficiencia de cogeneración (η_cog) vs Potencia eléctrica")
+            st.plotly_chart(fig_eta_cog, use_container_width=True)
+        else:
+            st.warning("No se pudo graficar η_cog vs potencia porque faltan las columnas requeridas.")
+
+        # 3) Eficiencia eléctrica (η_el ≈ η_ciclo) vs Potencia eléctrica
+        if ("Eficiencia_ciclo [%]" in df_plot.columns) and ("P_elec [kW]" in df_plot.columns):
+            fig_eta_el = px.scatter(
+                df_plot,
+                x="P_elec [kW]",
+                y="Eficiencia_ciclo [%]",
+                color="Turbina" if "Turbina" in df_plot.columns else None,
+                hover_data=hover_cols,
+                labels={"P_elec [kW]": "Potencia eléctrica [kW]", "Eficiencia_ciclo [%]": "η_el [%]"},
+            )
+            fig_eta_el.update_layout(title="Eficiencia eléctrica (η_el ≈ η_ciclo) vs Potencia eléctrica")
+            st.plotly_chart(fig_eta_el, use_container_width=True)
+        else:
+            st.warning("No se pudo graficar η_el vs potencia porque faltan las columnas requeridas.")
+
+    # -------------------------------------------------
+    # ANÁLISIS ESTADÍSTICO GLOBAL
+    # -------------------------------------------------
+    st.subheader("Análisis estadístico global")
+
+    tab_est1, tab_est2, tab_est3 = st.tabs(
+        [
+            "Resumen por turbina",
+            "Matriz de correlación (heatmap)",
+            "Histograma de η de cogeneración",
+        ]
+    )
+
+    with tab_est1:
+        st.markdown("### Estadísticos descriptivos por turbina")
+
+        # Elegimos algunas columnas numéricas de interés
+        cols_stats = [
+            "P_elec [kW]",
+            "Eficiencia_ciclo [%]",
+            "Eficiencia_cogeneracion [%]",
+            "HeatRate_real (kJ/kWh)",
+        ]
+
+        # Nos quedamos solo con las columnas que existan en el DataFrame
+        cols_stats = [c for c in cols_stats if c in df_resultados.columns]
+
+        if not cols_stats:
+            st.info("No se encontraron columnas numéricas esperadas para el resumen.")
+        else:
+            df_stats = (
+                df_resultados.groupby("Turbina")[cols_stats]
+                .agg(["mean", "std", "min", "max"])
             )
 
-        st.markdown(
-            """
-**Interpretación:**  
-- En qué rango se concentra la mayor parte de la eficiencia de cogeneración.  
-- El color por turbina permite ver si hay modelos que tienden a operar
-  sistemáticamente mejor que otros.
-"""
-        )
+            # Opcional: redondear para que se vea más bonito
+            df_stats = df_stats.round(2)
+
+            st.dataframe(df_stats, use_container_width=True)
+
+            st.markdown(
+                """
+    **Interpretación:**  
+    - Compara medias y desviaciones estándar entre turbinas para ver cuáles
+      son más eficientes y cuáles tienen resultados más dispersos.  
+    """
+            )
+
+    with tab_est2:
+        st.markdown("### Matriz de correlación")
+
+        # Seleccionamos algunas variables continuas relevantes
+        cols_corr = [
+            "Altitud (media) [m]",
+            "Temperatura_emplz [°C]",
+            "P_elec [kW]",
+            "HeatRate_real (kJ/kWh)",
+            "Eficiencia_ciclo [%]",
+            "Eficiencia_cogeneracion [%]",
+        ]
+        cols_corr = [c for c in cols_corr if c in df_resultados.columns]
+
+        if len(cols_corr) < 2:
+            st.info("No hay suficientes variables numéricas para calcular correlaciones.")
+        else:
+            df_corr = df_resultados[cols_corr].corr()
+
+            st.write("Correlaciones lineales entre variables seleccionadas:")
+            st.dataframe(df_corr.round(2), use_container_width=True)
+
+            # Heatmap con Plotly
+            fig_corr = px.imshow(
+                df_corr,
+                text_auto=True,
+                aspect="auto",
+                labels=dict(color="Correlación"),
+            )
+            st.plotly_chart(fig_corr, use_container_width=True)
+
+            st.markdown(
+                """
+    **Interpretación:**  
+    - Valores cercanos a **+1** indican relación directa fuerte.  
+    - Valores cercanos a **−1** indican relación inversa fuerte.  
+    """
+            )
+
+    with tab_est3:
+        st.markdown("### Histograma de eficiencia de cogeneración")
+
+        col_hist1, col_hist2 = st.columns([2, 1])
+
+        col_target = "Eficiencia_cogeneracion [%]"
+        if col_target not in df_resultados.columns:
+            st.info("No se encontró la columna 'Eficiencia_cogeneracion [%]' en los resultados.")
+        else:
+            with col_hist1:
+                fig_hist = px.histogram(
+                    df_resultados,
+                    x=col_target,
+                    color="Turbina",
+                    nbins=30,
+                    labels={col_target: "Eficiencia de cogeneración [%]"},
+                )
+                st.plotly_chart(fig_hist, use_container_width=True)
+
+            with col_hist2:
+                st.markdown("#### Parámetros básicos")
+                st.write(
+                    df_resultados[col_target].describe().round(2).to_frame(name=col_target)
+                )
+
+            st.markdown(
+                """
+    **Interpretación:**  
+    - En qué rango se concentra la mayor parte de la eficiencia de cogeneración.  
+    - El color por turbina permite ver si hay modelos que tienden a operar
+      sistemáticamente mejor que otros.
+    """
+            )
