@@ -5,6 +5,7 @@ Created on Tue Nov 18 12:54:28 2025
 @author: Gabo San
 """
 
+
 from CoolProp.CoolProp import PropsSI
 import pandas as pd
 import os
@@ -86,14 +87,14 @@ def efectividad_contra(NTU, C_r):
 
 
 # Leer bases de datos
-turbinas_df = pd.read_csv("Base_de_datos_turbinas_de_gas.csv")
-municipios_df = pd.read_excel("Municipios_D.xlsx")
+turbinas_df = pd.read_csv("BD_Turbinas_gas.csv")
+Emplazamientos_df = pd.read_excel("BD_Emplazamientos.xlsx")
 
 # Listas para acumular resultados
 filas_estados = []
 filas_resultados = []
 
-# Recorremos todas las turbinas x todos los municipios (producto cruzado)
+# Recorremos todas las turbinas x todos los Emplazamientos (producto cruzado)
 for _, turb in turbinas_df.iterrows():
     nombre_turbina = turb["Turbina"]
     P_ele = turb["Potencia (kW)"]        # Potencia de placa de la turbina [kW]
@@ -113,12 +114,12 @@ for _, turb in turbinas_df.iterrows():
         Qdot_comb_nom = 0.0
         m_dot_fuel_nom = 0.0 
 
-    for _, loc in municipios_df.iterrows():
-        nombre_mpio = loc["Municipio"]
+    for _, loc in Emplazamientos_df.iterrows():
+        nombre_emplz = loc["Emplazamiento"]
         T1_C = loc["Temperatura (°C)"]  # [°C]
         P1_bar = loc["Presión (bares)"] # [bar]
 
-        # Condiciones de entrada del aire según municipio
+        # Condiciones de entrada del aire según Emplazamientos
         T1 = T1_C + 273.15              # [K]
         P1 = P1_bar * 1e5               # [Pa] (1 bar = 1e5 Pa)
         
@@ -335,7 +336,12 @@ for _, turb in turbinas_df.iterrows():
                         # Idealmente Q_gc_kW ≈ Q_gc, pero lo tomamos de entalpías del agua.
                         Q_gc_kW = m_dot_agua * (h7 - h6)   # [kJ/s] ~ kW
                         # No permitir que Q_gc_kW supere los topes energéticos
-                        Q_gc_kW = min(Q_gc_kW, Q_cap, Q_fuel_cap)
+                        # Demanda térmica bruta del usuario (entre servicio y retorno)
+                        Q_user_dem_kW = m_dot_agua * (h7 - h8)  # [kJ/s] ~ kW
+
+                        # La potencia térmica útil efectiva no puede exceder
+                        # la potencia que realmente entrega el HRSG
+                        Q_user_kW = min(Q_user_dem_kW, Q_gc_kW)
                         
                         Q_user_kW = m_dot_agua * (h7 - h8) # [kJ/s] ~ kW
 
@@ -351,7 +357,9 @@ for _, turb in turbinas_df.iterrows():
                         # Factor de utilización del calor por parte del usuario
                         eta_uso = float("nan")
                         if Q_gc_kW > 0.0:
-                            eta_uso = Q_user_kW / Q_gc_kW   # puede ser >1 si el retorno está muy frío
+                            # Indicador acotado entre 0 y 1 del aprovechamiento
+                            # del calor disponible en el HRSG
+                            eta_uso = Q_user_kW / Q_gc_kW
 
                         # Eficiencia de cogeneración global:
                         denom = m_dot_fuel_actual * PCI  # [kJ/s] = kW
@@ -418,7 +426,7 @@ for _, turb in turbinas_df.iterrows():
         for est, T_est, P_est, h_est, s_est in estados_local:
             filas_estados.append({
                 "Turbina": nombre_turbina,
-                "Municipio": nombre_mpio,
+                "Emplazamiento": nombre_emplz,
                 "Estado": est,
                 "T [K]": T_est,
                 "P [Pa]": P_est,
@@ -430,7 +438,7 @@ for _, turb in turbinas_df.iterrows():
         # ACUMULAR RESULTADOS
         # -----------------------------
         filas_resultados.append({
-            "Turbina": nombre_turbina, "Municipio": nombre_mpio,
+            "Turbina": nombre_turbina, "Emplazamiento": nombre_emplz,
             "Potencia_deseada [kW]": P_ele, "Q_in [kJ/kg]": Q_in,
             "Q_out [kJ/kg]": Q_out, "W_comp [kJ/kg]": W_comp,
             "W_turb [kJ/kg]": W_turb, "W_net [kJ/kg]": W_net,
@@ -444,8 +452,8 @@ for _, turb in turbinas_df.iterrows():
             "HeatRate_real (kJ/kWh)": HeatRate_real,
             "Derate_HR [-]": derate_HR,
             "Altitud (media) [m]": loc["Altitud (media)"],
-            "Temperatura_mpio [°C]": T1_C,
-            "Presión_mpio [bar]": P1_bar,
+            "Temperatura_emplz [°C]": T1_C,
+            "Presión_emplz [bar]": P1_bar,
             "CTU (kJ/kWh)": CTU,
             "m_aire_nom (kg/s)": m_aire_nom,
             "T3_calc [K]": T3,
