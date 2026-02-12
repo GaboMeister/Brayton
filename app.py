@@ -38,8 +38,8 @@ st.markdown(
 <div style="text-align:center; line-height:1.2;">
   <h2>UNIVERSIDAD AUTÓNOMA METROPOLITANA</h2>
   <p>Proyecto Terminal</p>
-  <p><strong>Asesor:</strong> 🎓 Hernando Romero Paredes Rubio &nbsp;|&nbsp;
-     <strong>Alumno:</strong> 🤖 Rolando Gabriel Garza Luna</p>
+  <p><strong>Asesor:</strong> Hernando Romero Paredes Rubio &nbsp;|&nbsp;
+     <strong>Alumno:</strong> Rolando Gabriel Garza Luna</p>
 </div>
 """,
     unsafe_allow_html=True,
@@ -118,22 +118,22 @@ def formatear_num(x, ndigits=2):
 # -------------------------------------------------
 # SIDEBAR: CARGA DE BASES + PARÁMETROS + BOTÓN
 # -------------------------------------------------
-st.sidebar.header("📂 Bases de datos de entrada")
+st.sidebar.header("Bases de datos de entrada")
 
 turbinas_file = st.sidebar.file_uploader(
-    "Base de datos de turbinas (.csv)",
+    "Base de datos de Turbinas de gas (.csv)",
     type=["csv"],
     help="Sube el archivo CSV con las turbinas de gas.",
 )
 
-municipios_file = st.sidebar.file_uploader(
-    "Base de datos de municipios (.xlsx / .xls)",
+Emplazamientos_file = st.sidebar.file_uploader(
+    "Base de datos de Emplazamientos (.xlsx / .xls)",
     type=["xlsx", "xls"],
-    help="Sube el archivo Excel con los municipios/localidades.",
+    help="Sube el archivo Excel con los Emplazamientos.",
 )
 
 st.sidebar.markdown("---")
-st.sidebar.header("⚙️ Parámetros de simulación")
+st.sidebar.header("Parámetros de simulación")
 
 st.sidebar.markdown("**Parámetros del ciclo / combustible**")
 PCI = st.sidebar.number_input(
@@ -175,7 +175,7 @@ T5_min_C = st.sidebar.slider(
 )
 
 st.sidebar.markdown("---")
-run_button = st.sidebar.button("🚀 Ejecutar simulación")
+run_button = st.sidebar.button(" Ejecutar simulación")
 
 
 # -------------------------------------------------
@@ -183,8 +183,8 @@ run_button = st.sidebar.button("🚀 Ejecutar simulación")
 # -------------------------------------------------
 if run_button:
     # 1) Validar que se subieron ambos archivos (o ya existan en la carpeta)
-    base_turb_name = "Base_de_datos_turbinas_de_gas.csv"
-    base_mpios_name = "Municipios_D.xlsx"
+    base_turb_name = "BD_Turbinas_gas.csv"
+    base_emplz_name = "BD_Emplazamientos.xlsx"
 
     if turbinas_file is not None:
         # Guardar el CSV subido con el nombre que espera BraytonRI8.py
@@ -197,14 +197,14 @@ if run_button:
         )
         st.stop()
 
-    if municipios_file is not None:
+    if Emplazamientos_file is not None:
         # Guardar el Excel subido con el nombre que espera BraytonRI8.py
-        with open(base_mpios_name, "wb") as f:
-            f.write(municipios_file.getbuffer())
-    elif not os.path.exists(base_mpios_name):
+        with open(base_emplz_name, "wb") as f:
+            f.write(Emplazamientos_file.getbuffer())
+    elif not os.path.exists(base_emplz_name):
         st.error(
-            "No se encontró la base de municipios.\n\n"
-            "Por favor, sube un archivo Excel con los datos de los municipios."
+            "No se encontró la base de Emplazamientos.\n\n"
+            "Por favor, sube un archivo Excel con los datos de los Emplazamientos."
         )
         st.stop()
 
@@ -223,7 +223,7 @@ if run_button:
     )
 
     # 3) Ejecutar BraytonRI8.py con el mismo intérprete que está corriendo Streamlit
-    with st.spinner("Ejecutando simulación Brayton + Cogeneración..."):
+    with st.spinner("Ejecutando simulación Brayton..."):
         try:
             result = subprocess.run(
                 [sys.executable, "BraytonRI8.py"],
@@ -263,7 +263,7 @@ df_estados, df_resultados = cargar_resultados(ultimo_archivo, mtime)
 # -------------------------------------------------
 # DESCARGA DE HOJAS COMPLETAS
 # -------------------------------------------------
-st.subheader("💾 Descargar resultados completos")
+st.subheader("Descargar resultados completos")
 
 col_d1, col_d2 = st.columns(2)
 
@@ -288,9 +288,9 @@ with col_d2:
 st.markdown("---")
 
 # -------------------------------------------------
-# FILTROS: TURBINA Y MUNICIPIO PARA VER DETALLE
+# FILTROS: TURBINA Y Emplazamiento PARA VER DETALLE
 # -------------------------------------------------
-st.subheader("🔍 Análisis detallado por turbina y municipio")
+st.subheader("Análisis detallado por turbina y Emplazamiento")
 
 turbinas = sorted(df_resultados["Turbina"].unique())
 t_col1, t_col2 = st.columns(2)
@@ -299,26 +299,26 @@ with t_col1:
 
 df_res_turb = df_resultados[df_resultados["Turbina"] == turbina_sel]
 
-municipios = sorted(df_res_turb["Municipio"].unique())
+Emplazamientos = sorted(df_res_turb["Emplazamiento"].unique())
 with t_col2:
-    municipio_sel = st.selectbox("Municipio:", municipios)
+    Emplazamiento_sel = st.selectbox("Emplazamiento:", Emplazamientos)
 
-df_res_sel = df_res_turb[df_res_turb["Municipio"] == municipio_sel]
+df_res_sel = df_res_turb[df_res_turb["Emplazamiento"] == Emplazamiento_sel]
 if df_res_sel.empty:
-    st.warning("No hay resultados para esa combinación turbina/municipio.")
+    st.warning("No hay resultados para esa combinación turbina/Emplazamiento.")
     st.stop()
 
 fila = df_res_sel.iloc[0]
 
 df_est_sel = df_estados[
     (df_estados["Turbina"] == turbina_sel)
-    & (df_estados["Municipio"] == municipio_sel)
+    & (df_estados["Emplazamiento"] == Emplazamiento_sel)
 ].sort_values("Estado")
 
 # -------------------------------------------------
 # PANEL DE MÉTRICAS LOCALES
 # -------------------------------------------------
-st.subheader("📊 Resumen del punto de operación seleccionado")
+st.subheader("Resumen del punto de operación seleccionado")
 
 col1, col2, col3, col4 = st.columns(4)
 
@@ -349,8 +349,8 @@ col6.metric(
     formatear_num(fila.get("Altitud (media) [m]"), 1),
 )
 col7.metric(
-    "T_municipio [°C]",
-    formatear_num(fila.get("Temperatura_mpio [°C]"), 1),
+    "T_Emplazamiento [°C]",
+    formatear_num(fila.get("Temperatura_emplz [°C]"), 1),
 )
 col8.metric(
     "Derate potencia [-]",
@@ -360,11 +360,11 @@ col8.metric(
 # -------------------------------------------------
 # ESTADOS TERMODINÁMICOS 1–8
 # -------------------------------------------------
-st.subheader("📋 Estados termodinámicos (1–8)")
+st.subheader("Estados termodinámicos (1–8)")
 
 if df_est_sel.empty:
     st.info(
-        "Para esta combinación turbina/municipio solo se tienen estados 1–4 "
+        "Para esta combinación turbina/Emplazamiento solo se tienen estados 1–4 "
         "(no hubo cogeneración factible)."
     )
 else:
@@ -372,9 +372,9 @@ else:
     cols_extra = [
         c
         for c in df_est_sel.columns
-        if c not in cols_orden and c not in ["Turbina", "Municipio"]
+        if c not in cols_orden and c not in ["Turbina", "Emplazamiento"]
     ]
-    df_mostrar = df_est_sel[["Turbina", "Municipio"] + cols_orden + cols_extra]
+    df_mostrar = df_est_sel[["Turbina", "Emplazamiento"] + cols_orden + cols_extra]
 
     st.dataframe(
         df_mostrar.reset_index(drop=True),
@@ -383,9 +383,9 @@ else:
     )
 
 # -------------------------------------------------
-# GRÁFICAS: TODAS LAS TURBINAS, TODOS LOS MUNICIPIOS
+# GRÁFICAS: TODAS LAS TURBINAS, TODOS LOS Emplazamientos
 # -------------------------------------------------
-st.subheader("📈 Gráficas globales (todas las turbinas, todos los municipios)")
+st.subheader("Gráficas globales (todas las turbinas, todos los Emplazamientos)")
 
 tab1, tab2, tab3 = st.tabs(
     [
@@ -403,7 +403,7 @@ with tab1:
         y="P_elec [kW]",
         color="Turbina",
         hover_data=[
-            "Municipio",
+            "Emplazamiento",
             "Eficiencia_ciclo [%]",
             "Eficiencia_cogeneracion [%]",
         ],
@@ -418,12 +418,12 @@ with tab2:
     st.markdown("**Heat Rate vs Temperatura ambiente**")
     fig_hr_T = px.scatter(
         df_resultados,
-        x="Temperatura_mpio [°C]",
+        x="Temperatura_emplz [°C]",
         y="HeatRate_real (kJ/kWh)",
         color="Turbina",
-        hover_data=["Municipio", "Altitud (media) [m]"],
+        hover_data=["Emplazamiento", "Altitud (media) [m]"],
         labels={
-            "Temperatura_mpio [°C]": "Temperatura ambiente [°C]",
+            "Temperatura_emplz [°C]": "Temperatura ambiente [°C]",
             "HeatRate_real (kJ/kWh)": "Heat Rate real [kJ/kWh]",
         },
     )
@@ -432,11 +432,11 @@ with tab2:
     st.markdown("**η ciclo vs Temperatura ambiente**")
     fig_eta_T = px.scatter(
         df_resultados,
-        x="Temperatura_mpio [°C]",
+        x="Temperatura_emplz [°C]",
         y="Eficiencia_ciclo [%]",
         color="Turbina",
-        hover_data=["Municipio", "Eficiencia_cogeneracion [%]"],
-        labels={"Temperatura_mpio [°C]": "Temperatura ambiente [°C]"},
+        hover_data=["Emplazamiento", "Eficiencia_cogeneracion [%]"],
+        labels={"Temperatura_emplz [°C]": "Temperatura ambiente [°C]"},
     )
     st.plotly_chart(fig_eta_T, use_container_width=True)
 
@@ -449,7 +449,7 @@ with tab3:
         z="P_elec [kW]",
         color="Turbina",
         hover_name="Turbina",
-        hover_data=["Municipio", "Eficiencia_cogeneracion [%]"],
+        hover_data=["Emplazamiento", "Eficiencia_cogeneracion [%]"],
         labels={
             "Altitud (media) [m]": "Altitud [m]",
             "HeatRate_real (kJ/kWh)": "Heat Rate [kJ/kWh]",
@@ -461,7 +461,7 @@ with tab3:
 # -------------------------------------------------
 # ANÁLISIS ESTADÍSTICO GLOBAL
 # -------------------------------------------------
-st.subheader("📊 Análisis estadístico global")
+st.subheader("Análisis estadístico global")
 
 tab_est1, tab_est2, tab_est3 = st.tabs(
     [
@@ -472,7 +472,7 @@ tab_est1, tab_est2, tab_est3 = st.tabs(
 )
 
 with tab_est1:
-    st.markdown("### 📌 Estadísticos descriptivos por turbina")
+    st.markdown("### Estadísticos descriptivos por turbina")
 
     # Elegimos algunas columnas numéricas de interés
     cols_stats = [
@@ -507,12 +507,12 @@ with tab_est1:
         )
 
 with tab_est2:
-    st.markdown("### 🔥 Matriz de correlación")
+    st.markdown("### Matriz de correlación")
 
     # Seleccionamos algunas variables continuas relevantes
     cols_corr = [
         "Altitud (media) [m]",
-        "Temperatura_mpio [°C]",
+        "Temperatura_emplz [°C]",
         "P_elec [kW]",
         "HeatRate_real (kJ/kWh)",
         "Eficiencia_ciclo [%]",
@@ -546,7 +546,7 @@ with tab_est2:
         )
 
 with tab_est3:
-    st.markdown("### 📊 Histograma de eficiencia de cogeneración")
+    st.markdown("### Histograma de eficiencia de cogeneración")
 
     col_hist1, col_hist2 = st.columns([2, 1])
 
