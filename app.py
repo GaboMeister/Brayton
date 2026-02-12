@@ -5,10 +5,6 @@ Created on Thu Oct 16 02:32:09 2025
 @author: Gabo San
 """
 
-# app.py
-# Interfaz en Streamlit para correr BraytonRI8.py y visualizar resultados
-# Pensada para usuarios que NO programan: suben sus bases, mueven sliders y listo.
-
 import os
 import glob
 import json
@@ -260,6 +256,15 @@ st.info(f"Usando archivo de resultados: **{os.path.basename(ultimo_archivo)}**")
 
 df_estados, df_resultados = cargar_resultados(ultimo_archivo, mtime)
 
+# -----------------------------
+# MÉTRICAS DERIVADAS
+# -----------------------------
+# Q/E: cociente entre calor útil entregado al usuario (Q_user) y potencia eléctrica (P_elec).
+if ("Q_user [kW]" in df_resultados.columns) and ("P_elec [kW]" in df_resultados.columns):
+    denom = df_resultados["P_elec [kW]"].where(df_resultados["P_elec [kW]"] != 0)
+    df_resultados["Q_E [-]"] = (df_resultados["Q_user [kW]"] / denom).replace([float('inf'), float('-inf')], pd.NA)
+
+
 # -------------------------------------------------
 # DESCARGA DE HOJAS COMPLETAS
 # -------------------------------------------------
@@ -387,11 +392,12 @@ else:
 # -------------------------------------------------
 st.subheader("Gráficas globales (todas las turbinas, todos los Emplazamientos)")
 
-tab1, tab2, tab3 = st.tabs(
+tab1, tab2, tab3, tab4 = st.tabs(
     [
         "Potencia vs Altitud",
         "Heat Rate / eficiencias vs Temperatura ambiente",
         "Scatter 3D: P_elec vs HR vs Altitud",
+        "Q/E y eficiencias vs Potencia eléctrica",
     ]
 )
 
@@ -457,6 +463,82 @@ with tab3:
         },
     )
     st.plotly_chart(fig_3d, use_container_width=True)
+
+
+with tab4:
+    st.subheader("Indicadores de cogeneración vs potencia eléctrica")
+    st.caption("Q/E usa Q_user [kW] (calor útil entregado al usuario) y P_elec [kW].")
+
+    df_plot = df_filtrado.copy()
+    if df_plot.empty:
+        st.info("No hay datos para graficar con el filtro actual.")
+
+
+    # Asegurar columna Q/E en el dataframe filtrado
+    if ("Q_E [-]" not in df_plot.columns) and ("Q_user [kW]" in df_plot.columns) and ("P_elec [kW]" in df_plot.columns):
+        denom = df_plot["P_elec [kW]"].where(df_plot["P_elec [kW]"] != 0)
+        df_plot["Q_E [-]"] = (df_plot["Q_user [kW]"] / denom).replace([float('inf'), float('-inf')], pd.NA)
+
+    hover_cols = [
+        "Turbina",
+        "Emplazamiento",
+        "Altitud (media) [m]",
+        "Temperatura_emplz [°C]",
+        "Presión_emplz [bar]",
+        "Q_gc_HRSG [kW]",
+        "Q_user [kW]",
+        "Q_E [-]",
+        "Eficiencia_ciclo [%]",
+        "Eficiencia_cogeneracion [%]",
+        "HeatRate_real (kJ/kWh)",
+        "Derate_P [-]",
+    ]
+    hover_cols = [c for c in hover_cols if c in df_plot.columns]
+
+    # 1) Q/E vs Potencia eléctrica
+    if ("Q_E [-]" in df_plot.columns) and ("P_elec [kW]" in df_plot.columns):
+        fig_qe = px.scatter(
+            df_plot,
+            x="P_elec [kW]",
+            y="Q_E [-]",
+            color="Turbina" if "Turbina" in df_plot.columns else None,
+            hover_data=hover_cols,
+            labels={"P_elec [kW]": "Potencia eléctrica [kW]", "Q_E [-]": "Q/E [-]"},
+        )
+        fig_qe.update_layout(title="Q/E vs Potencia eléctrica")
+        st.plotly_chart(fig_qe, use_container_width=True)
+    else:
+        st.warning("No se pudieron calcular/graficar Q/E porque faltan las columnas Q_user [kW] y/o P_elec [kW].")
+
+    # 2) Eficiencia de cogeneración vs Potencia eléctrica
+    if ("Eficiencia_cogeneracion [%]" in df_plot.columns) and ("P_elec [kW]" in df_plot.columns):
+        fig_eta_cog = px.scatter(
+            df_plot,
+            x="P_elec [kW]",
+            y="Eficiencia_cogeneracion [%]",
+            color="Turbina" if "Turbina" in df_plot.columns else None,
+            hover_data=hover_cols,
+            labels={"P_elec [kW]": "Potencia eléctrica [kW]", "Eficiencia_cogeneracion [%]": "η_cog [%]"},
+        )
+        fig_eta_cog.update_layout(title="Eficiencia de cogeneración (η_cog) vs Potencia eléctrica")
+        st.plotly_chart(fig_eta_cog, use_container_width=True)
+    else:
+        st.warning("No se pudo graficar η_cog vs potencia porque faltan las columnas requeridas.")
+
+    # 3) Eficiencia eléctrica (η_el ≈ η_ciclo) vs Potencia eléctrica
+    if ("Eficiencia_ciclo [%]" in df_plot.columns) and ("P_elec [kW]" in df_plot.columns):
+        fig_eta_el = px.scatter(
+            df_plot,
+            x="P_elec [kW]",
+            y="Eficiencia_ciclo [%]",
+            color="Turbina" if "Turbina" in df_plot.columns else None,
+            hover_data=hover_cols,
+            labels={"P_elec [kW]": "Potencia eléctrica [kW]", "Eficiencia_ciclo [%]": "η_el [%]"},
+        )
+        fig_eta_el.update_layout(title="Eficiencia eléctrica (η_el ≈ η_ciclo) vs Potencia eléctrica")
+        st.plotly_chart(fig_eta_el, use_container_width=True)
+    else:
+        st.warning("No se pudo graficar η_el vs potencia porque faltan las columnas requeridas.")
 
 # -------------------------------------------------
 # ANÁLISIS ESTADÍSTICO GLOBAL
@@ -578,4 +660,3 @@ with tab_est3:
   sistemáticamente mejor que otros.
 """
         )
-
